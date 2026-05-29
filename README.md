@@ -1,6 +1,6 @@
 # YTGrab
 
-A tiny, native macOS app for downloading YouTube videos and audio — built with SwiftUI, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org/).
+A tiny, native macOS app for downloading videos and audio from the web — built with SwiftUI, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org/). Works with any of the [1000+ sites yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
 
 No Electron, no browser engine. The app binary is **~260 KB**; the rest of the bundle is the two command-line tools it drives.
 
@@ -62,7 +62,7 @@ cd build
 
 Download only content you have the right to download (your own uploads,
 public-domain, Creative Commons, or with the rights-holder's permission).
-Respect YouTube's Terms of Service and applicable copyright law.
+Respect each site's Terms of Service and applicable copyright law.
 
 ## License
 

@@ -49,7 +49,7 @@ final class Downloader: ObservableObject {
 
     func start() {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { appendLog("⚠️  Please paste a YouTube URL first.\n"); return }
+        guard !trimmed.isEmpty else { appendLog("⚠️  Please paste a video URL first.\n"); return }
         guard let ytdlp = resource("yt-dlp"), let ffmpeg = resource("ffmpeg") else {
             appendLog("❌ Bundled tools missing from app.\n"); return
         }
@@ -152,7 +152,7 @@ struct HeaderView: View {
                     Text("YTGrab")
                         .font(.system(size: 28, weight: .heavy))
                         .foregroundStyle(.white)
-                    Text("Download YouTube video & audio")
+                    Text("Download video & audio from the web")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.85))
                 }
@@ -191,7 +191,7 @@ struct ContentView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "link")
                                 .foregroundStyle(.secondary)
-                            TextField("Paste a YouTube URL…", text: $dl.url)
+                            TextField("Paste a video URL…", text: $dl.url)
                                 .textFieldStyle(.plain)
                                 .font(.body)
                                 .disabled(dl.isRunning)
