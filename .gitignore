@@ -1,0 +1,17 @@
+# Build artifacts
+/YTGrab.app/
+/YTGrab.dmg
+build/AppIcon.icns
+build/YTGrab.iconset/
+build/dmgbg.png
+
+# Downloaded dependencies (fetched via build/fetch-deps.sh)
+build/Resources/
+
+# Compiled Swift helpers
+build/icongen
+build/dmgbg
+*.o
+
+# macOS
+.DS_Store
