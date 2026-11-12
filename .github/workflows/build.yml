@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: macos-15   # Apple Silicon, matching the app's arm64 target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build app
         run: ./build/build.sh
@@ -33,7 +33,7 @@ jobs:
       - name: Package
         run: ditto -c -k --keepParent YTGrab.app YTGrab.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: YTGrab
           path: YTGrab.zip

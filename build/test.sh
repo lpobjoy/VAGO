@@ -23,8 +23,11 @@ trap cleanup EXIT
 fail() { echo "❌ $*"; exit 1; }
 # Asserts that a media file contains the given stream, e.g. "Video: h264".
 has_stream() {
-    "$RES/ffmpeg" -hide_banner -i "$1" 2>&1 | grep -q "$2" \
-        || fail "$(basename "$1") has no '$2' stream"
+    # ffmpeg exits non-zero when given no output file, so don't let that (or
+    # pipefail) decide the result — only the stream listing matters.
+    local info
+    info="$("$RES/ffmpeg" -hide_banner -i "$1" 2>&1 || true)"
+    grep -q "$2" <<<"$info" || fail "$(basename "$1") has no '$2' stream"
 }
 
 echo "== Bundle =="
