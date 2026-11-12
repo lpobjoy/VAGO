@@ -1,6 +1,60 @@
 import SwiftUI
 import AppKit
 
+// MARK: - yt-dlp invocation (shared by the UI and the --cli mode)
+
+enum Mode: String, CaseIterable, Identifiable {
+    case videoMP4 = "Video — MP4 (QuickTime-compatible)"
+    case audioMP3 = "Audio only — MP3"
+    var id: String { rawValue }
+}
+
+/// Paths of the command-line tools bundled in Contents/Resources.
+struct Tools {
+    let ytdlp: String
+    let ffmpeg: String
+    /// JavaScript runtime yt-dlp needs for YouTube. Optional so the app still
+    /// works for other sites if it is missing from the bundle.
+    let deno: String?
+
+    static func bundled() -> Tools? {
+        func path(_ name: String) -> String? { Bundle.main.path(forResource: name, ofType: nil) }
+        guard let ytdlp = path("yt-dlp"), let ffmpeg = path("ffmpeg") else { return nil }
+        return Tools(ytdlp: ytdlp, ffmpeg: ffmpeg, deno: path("deno"))
+    }
+}
+
+func ytdlpArguments(url: String, mode: Mode, wholePlaylist: Bool,
+                    destination: URL, tools: Tools) -> [String] {
+    var args: [String] = [
+        "--no-mtime",
+        "--ffmpeg-location", tools.ffmpeg,
+        "--newline",
+        "-o", destination.path + "/%(playlist_index|)s%(playlist_index& - |)s%(title)s.%(ext)s",
+    ]
+    if let deno = tools.deno {
+        args += ["--js-runtimes", "deno:" + deno]
+    }
+
+    args += [wholePlaylist ? "--yes-playlist" : "--no-playlist"]
+
+    switch mode {
+    case .videoMP4:
+        // Prefer H.264 + AAC so the result plays in QuickTime. If the site only
+        // offers something else (WebM, MKV…), --recode-video converts it to MP4.
+        args += ["--merge-output-format", "mp4",
+                 "--recode-video", "mp4",
+                 "-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]/best"]
+    case .audioMP3:
+        args += ["-x", "--audio-format", "mp3"]
+    }
+
+    // "--" stops option parsing, so pasted text starting with "-" is never
+    // mistaken for a yt-dlp option.
+    args += ["--", url]
+    return args
+}
+
 // MARK: - Download engine
 
 @MainActor
@@ -15,18 +69,7 @@ final class Downloader: ObservableObject {
         return dl ?? FileManager.default.homeDirectoryForCurrentUser
     }()
 
-    enum Mode: String, CaseIterable, Identifiable {
-        case videoMP4 = "Video — MP4 (QuickTime-compatible)"
-        case audioMP3 = "Audio only — MP3"
-        var id: String { rawValue }
-    }
-
     private var process: Process?
-
-    // Locate the bundled binaries inside Contents/Resources
-    private func resource(_ name: String) -> String? {
-        Bundle.main.path(forResource: name, ofType: nil)
-    }
 
     func appendLog(_ s: String) {
         log += s
@@ -50,36 +93,14 @@ final class Downloader: ObservableObject {
     func start() {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { appendLog("⚠️  Please paste a video URL first.\n"); return }
-        guard let ytdlp = resource("yt-dlp"), let ffmpeg = resource("ffmpeg") else {
+        guard let tools = Tools.bundled() else {
             appendLog("❌ Bundled tools missing from app.\n"); return
         }
-
-        var args: [String] = [
-            "--no-mtime",
-            "--ffmpeg-location", ffmpeg,
-            "--newline",
-            "-o", destination.path + "/%(playlist_index|)s%(playlist_index& - |)s%(title)s.%(ext)s",
-        ]
-
-        if wholePlaylist {
-            args += ["--yes-playlist"]
-        } else {
-            args += ["--no-playlist"]
-        }
-
-        switch mode {
-        case .videoMP4:
-            // Force H.264 + AAC so the result plays in QuickTime; fall back gracefully.
-            args += ["--merge-output-format", "mp4",
-                     "-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]/best"]
-        case .audioMP3:
-            args += ["-x", "--audio-format", "mp3"]
-        }
-
-        args.append(trimmed)
+        let args = ytdlpArguments(url: trimmed, mode: mode, wholePlaylist: wholePlaylist,
+                                  destination: destination, tools: tools)
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: ytdlp)
+        proc.executableURL = URL(fileURLWithPath: tools.ytdlp)
         proc.arguments = args
         let pipe = Pipe()
         proc.standardOutput = pipe
@@ -87,7 +108,10 @@ final class Downloader: ObservableObject {
 
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty else { return }
+            // Lossy decoding: a chunk may end mid-character, and dropping the
+            // whole chunk (as strict decoding would) loses log lines.
+            let text = String(decoding: data, as: UTF8.self)
             Task { @MainActor in self.appendLog(text) }
         }
 
@@ -205,7 +229,7 @@ struct ContentView: View {
 
                         HStack(spacing: 16) {
                             Picker("", selection: $dl.mode) {
-                                ForEach(Downloader.Mode.allCases) {
+                                ForEach(Mode.allCases) {
                                     Text($0.rawValue).tag($0)
                                 }
                             }
@@ -293,14 +317,67 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Headless mode
+
+/// `YTGrab --cli [--mp3] [--playlist] [-o DIR] URL` runs the same download the
+/// window would, without any UI. Used by build/test.sh; handy for scripting.
+func runCLI(_ arguments: [String]) -> Int32 {
+    func fail(_ message: String) -> Int32 {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        return 2
+    }
+    var mode = Mode.videoMP4
+    var wholePlaylist = false
+    var destination = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    var url: String?
+
+    var rest = arguments[...]
+    while let arg = rest.popFirst() {
+        switch arg {
+        case "--mp3": mode = .audioMP3
+        case "--playlist": wholePlaylist = true
+        case "-o":
+            guard let dir = rest.popFirst() else { return fail("-o needs a folder") }
+            destination = URL(fileURLWithPath: dir)
+        default:
+            guard url == nil else { return fail("unexpected argument: \(arg)") }
+            url = arg
+        }
+    }
+    guard let url else { return fail("usage: YTGrab --cli [--mp3] [--playlist] [-o DIR] URL") }
+    guard let tools = Tools.bundled() else { return fail("bundled tools missing from app") }
+
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: tools.ytdlp)
+    proc.arguments = ytdlpArguments(url: url, mode: mode, wholePlaylist: wholePlaylist,
+                                    destination: destination, tools: tools)
+    do {
+        try proc.run()
+    } catch {
+        return fail("could not launch yt-dlp: \(error.localizedDescription)")
+    }
+    proc.waitUntilExit()
+    return proc.terminationStatus
+}
+
 // MARK: - App entry
 
-@main
 struct YTGrabApp: App {
     var body: some Scene {
         WindowGroup("YTGrab") {
             ContentView()
         }
         .windowResizability(.contentSize)
+    }
+}
+
+@main
+enum Main {
+    @MainActor static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == "--cli" {
+            exit(runCLI(Array(arguments.dropFirst())))
+        }
+        YTGrabApp.main()
     }
 }

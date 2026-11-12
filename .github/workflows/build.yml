@@ -1,0 +1,39 @@
+name: Build & test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15   # Apple Silicon, matching the app's arm64 target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: ./build/build.sh
+
+      - name: Test
+        run: ./build/test.sh
+
+      # Informational only: video sites often block CI runners' IP addresses.
+      - name: Live YouTube check
+        continue-on-error: true
+        run: |
+          RES=YTGrab.app/Contents/Resources
+          "$RES/yt-dlp" --js-runtimes "deno:$PWD/$RES/deno" --simulate \
+            --print "%(title)s [%(format_id)s]" \
+            -f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]/best" \
+            -- "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+      - name: Package
+        run: ditto -c -k --keepParent YTGrab.app YTGrab.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YTGrab
+          path: YTGrab.zip

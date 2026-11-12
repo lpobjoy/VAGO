@@ -18,9 +18,10 @@ fi
 
 echo "== Creating read-write DMG =="
 rm -f "$RW" "$FINAL"
-# Size generously to fit the 84MB app plus background.
+# Size to the app plus headroom for the background and filesystem overhead.
+SIZE_MB=$(( $(du -sm "$APP" | cut -f1) + 40 ))
 hdiutil create -srcfolder "$APP" -volname "$VOL" -fs HFS+ \
-    -format UDRW -size 200m "$RW" >/dev/null
+    -format UDRW -size "${SIZE_MB}m" "$RW" >/dev/null
 
 echo "== Mounting =="
 hdiutil detach "$MNT" >/dev/null 2>&1 || true

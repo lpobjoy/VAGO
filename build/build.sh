@@ -6,7 +6,7 @@ APP="YTGrab.app"
 OUT="../$APP"
 
 # Bootstrap: fetch the bundled tools and generate the icon if they're missing.
-if [ ! -x Resources/yt-dlp ] || [ ! -x Resources/ffmpeg ]; then
+if [ ! -x Resources/yt-dlp ] || [ ! -x Resources/ffmpeg ] || [ ! -x Resources/deno ]; then
     echo "== Fetching dependencies =="
     ./fetch-deps.sh
 fi
@@ -32,12 +32,16 @@ cp Info.plist "$OUT/Contents/Info.plist"
 cp AppIcon.icns "$OUT/Contents/Resources/AppIcon.icns"
 cp Resources/yt-dlp "$OUT/Contents/Resources/yt-dlp"
 cp Resources/ffmpeg "$OUT/Contents/Resources/ffmpeg"
-chmod +x "$OUT/Contents/Resources/yt-dlp" "$OUT/Contents/Resources/ffmpeg"
+cp Resources/deno "$OUT/Contents/Resources/deno"
+chmod +x "$OUT/Contents/Resources/yt-dlp" "$OUT/Contents/Resources/ffmpeg" \
+    "$OUT/Contents/Resources/deno"
 
 echo "== Ad-hoc code signing =="
 # Sign nested binaries first, then the whole bundle, so Gatekeeper is happy.
 codesign --force -s - "$OUT/Contents/Resources/yt-dlp"
 codesign --force -s - "$OUT/Contents/Resources/ffmpeg"
+# deno ships with the entitlements its JIT needs; keep them when re-signing.
+codesign --force --preserve-metadata=entitlements -s - "$OUT/Contents/Resources/deno"
 codesign --force -s - "$OUT/Contents/MacOS/YTGrab"
 codesign --force --deep -s - "$OUT"
 

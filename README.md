@@ -1,8 +1,8 @@
 # YTGrab
 
-A tiny, native macOS app for downloading videos and audio from the web — built with SwiftUI, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org/). Works with any of the [1000+ sites yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
+A tiny, native macOS app for downloading videos and audio from the web — built with SwiftUI, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org/) and [Deno](https://deno.com/). Works with any of the [1000+ sites yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
 
-No Electron, no browser engine. The app binary is **~260 KB**; the rest of the bundle is the two command-line tools it drives.
+No Electron, no browser engine. The app binary is **~260 KB**; the rest of the bundle is the command-line tools it drives.
 
 <img alt="YTGrab icon" src="docs/icon.png" width="128">
 
@@ -10,7 +10,7 @@ No Electron, no browser engine. The app binary is **~260 KB**; the rest of the b
 
 ## Features
 
-- 🎬 **Video → MP4** forced to H.264/AAC, so downloads play in QuickTime and on tablets/phones with no conversion
+- 🎬 **Video → MP4** in H.264/AAC, so downloads play in QuickTime and on tablets/phones — sources only offered in other formats (WebM, MKV…) are converted automatically
 - 🎵 **Audio → MP3** extraction
 - 📋 **Whole-playlist** mode, with files numbered in playlist order
 - 📂 Pick any output folder (defaults to `~/Downloads`)
@@ -34,12 +34,24 @@ Requires Xcode command-line tools (`swiftc`) on macOS.
 
 ```bash
 cd build
-./build.sh      # fetches yt-dlp + ffmpeg, generates the icon, compiles, signs → ../YTGrab.app
+./build.sh      # fetches yt-dlp + ffmpeg + deno, generates the icon, compiles, signs → ../YTGrab.app
+./test.sh       # smoke-tests the built app with real downloads from localhost
 ./makedmg.sh    # builds the styled ../YTGrab.dmg with a custom background
 ```
 
 `build.sh` is self-bootstrapping: on first run it downloads the bundled tools via
 `fetch-deps.sh` and generates the icon. These large artifacts are git-ignored.
+
+The tools are fetched at their latest versions, and video sites change often — if
+downloads start failing, delete `build/Resources/` and rebuild to pick up a fresh yt-dlp.
+
+### Command-line mode
+
+The app binary can also run headless, which is what `test.sh` uses:
+
+```bash
+YTGrab.app/Contents/MacOS/YTGrab --cli [--mp3] [--playlist] [-o DIR] URL
+```
 
 ### Project layout
 
@@ -49,14 +61,16 @@ cd build
 | `build/Info.plist` | App bundle metadata |
 | `build/icongen.swift` | Renders the app icon at all required sizes |
 | `build/dmgbg.swift` | Renders the DMG background image |
-| `build/fetch-deps.sh` | Downloads yt-dlp + static FFmpeg into `Resources/` |
+| `build/fetch-deps.sh` | Downloads yt-dlp, static FFmpeg and Deno into `Resources/` |
 | `build/build.sh` | Compiles and assembles `YTGrab.app` |
+| `build/test.sh` | End-to-end smoke test of the built app |
 | `build/makedmg.sh` | Produces the styled `YTGrab.dmg` |
 
 ## Acknowledgements
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the download engine
 - [FFmpeg](https://ffmpeg.org/) — muxing/transcoding (static build via [osxexperts.net](https://www.osxexperts.net/))
+- [Deno](https://deno.com/) — JavaScript runtime yt-dlp needs for YouTube
 
 ## Disclaimer
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Downloads the bundled command-line tools (yt-dlp + static ffmpeg) into
+# Downloads the bundled command-line tools (yt-dlp, static ffmpeg, deno) into
 # build/Resources. These are large binaries and are intentionally NOT committed
 # to git — run this once before building.
 set -euo pipefail
@@ -26,7 +26,21 @@ else
     echo "ffmpeg already present, skipping."
 fi
 
+# yt-dlp needs a JavaScript runtime to download from YouTube; deno is the one
+# it supports out of the box.
+if [ ! -x deno ]; then
+    echo "== Downloading deno (Apple Silicon) =="
+    curl -L --fail -o deno.zip \
+        "https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip"
+    unzip -o deno.zip >/dev/null
+    rm -f deno.zip
+    chmod +x deno
+else
+    echo "deno already present, skipping."
+fi
+
 echo "== Versions =="
 ./yt-dlp --version
 ./ffmpeg -version | head -1
+./deno --version | head -1
 echo "✅ Dependencies ready."
