@@ -1,5 +1,5 @@
 #!/bin/bash
-# Downloads the bundled command-line tools (yt-dlp, static ffmpeg, deno) into
+# Downloads the bundled command-line tools (yt-dlp, static ffmpeg, deno, Real-ESRGAN) into
 # build/Resources. These are large binaries and are intentionally NOT committed
 # to git — run this once before building.
 set -euo pipefail
@@ -39,8 +39,26 @@ else
     echo "deno already present, skipping."
 fi
 
+# Real-ESRGAN (ncnn/Vulkan build) powers the optional AI upscaling. Only the
+# small, fast video model is kept.
+if [ ! -x realesrgan/realesrgan-ncnn-vulkan ]; then
+    echo "== Downloading Real-ESRGAN =="
+    curl -L --fail -o esr.zip \
+        "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip"
+    rm -rf esr-unpacked realesrgan
+    unzip -o esr.zip -d esr-unpacked >/dev/null
+    mkdir -p realesrgan/models
+    cp "$(find esr-unpacked -type f -name realesrgan-ncnn-vulkan | head -1)" realesrgan/
+    find esr-unpacked -type f -name 'realesr-animevideov3-x2.*' -exec cp {} realesrgan/models/ \;
+    rm -rf esr.zip esr-unpacked
+    chmod +x realesrgan/realesrgan-ncnn-vulkan
+else
+    echo "Real-ESRGAN already present, skipping."
+fi
+
 echo "== Versions =="
 ./yt-dlp --version
 ./ffmpeg -version | head -1
 ./deno --version | head -1
+echo "realesrgan-ncnn-vulkan ($(lipo -archs realesrgan/realesrgan-ncnn-vulkan)), models: $(ls realesrgan/models | tr '\n' ' ')"
 echo "✅ Dependencies ready."

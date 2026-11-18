@@ -16,16 +16,48 @@ struct Tools {
     /// JavaScript runtime yt-dlp needs for YouTube. Optional so the app still
     /// works for other sites if it is missing from the bundle.
     let deno: String?
+    /// The upscale.sh pipeline and the folder holding Real-ESRGAN and its models.
+    let upscaleScript: String?
+    let realesrgan: String?
 
     static func bundled() -> Tools? {
         func path(_ name: String) -> String? { Bundle.main.path(forResource: name, ofType: nil) }
         guard let ytdlp = path("yt-dlp"), let ffmpeg = path("ffmpeg") else { return nil }
-        return Tools(ytdlp: ytdlp, ffmpeg: ffmpeg, deno: path("deno"))
+        return Tools(ytdlp: ytdlp, ffmpeg: ffmpeg, deno: path("deno"),
+                     upscaleScript: path("upscale.sh"), realesrgan: path("realesrgan"))
+    }
+
+    var canUpscale: Bool { upscaleScript != nil && realesrgan != nil }
+
+    /// A process that AI-upscales one downloaded video (see upscale.sh).
+    func upscaleProcess(file: String) -> Process? {
+        guard let upscaleScript, let realesrgan else { return nil }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = [upscaleScript, file]
+        var env = ProcessInfo.processInfo.environment
+        env["FFMPEG"] = ffmpeg
+        env["UPSCALER"] = realesrgan + "/realesrgan-ncnn-vulkan"
+        env["MODELS"] = realesrgan + "/models"
+        proc.environment = env
+        return proc
     }
 }
 
+/// A fresh temp file for yt-dlp to list the files it saved, one path per line.
+func newFileListPath() -> String {
+    NSTemporaryDirectory() + "ytgrab-files-" + UUID().uuidString + ".txt"
+}
+
+/// Reads and removes a file written via `fileList:` below.
+func takeFileList(_ path: String) -> [String] {
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
+    return text.split(separator: "\n").map(String.init)
+}
+
 func ytdlpArguments(url: String, mode: Mode, wholePlaylist: Bool,
-                    destination: URL, tools: Tools) -> [String] {
+                    destination: URL, tools: Tools, fileList: String? = nil) -> [String] {
     var args: [String] = [
         "--no-mtime",
         "--ffmpeg-location", tools.ffmpeg,
@@ -34,6 +66,11 @@ func ytdlpArguments(url: String, mode: Mode, wholePlaylist: Bool,
     ]
     if let deno = tools.deno {
         args += ["--js-runtimes", "deno:" + deno]
+    }
+
+    if let fileList {
+        // Record the final path of every saved file, for the upscaling step.
+        args += ["--print-to-file", "after_move:%(filepath)s", fileList]
     }
 
     args += [wholePlaylist ? "--yes-playlist" : "--no-playlist"]
@@ -62,6 +99,7 @@ final class Downloader: ObservableObject {
     @Published var url: String = ""
     @Published var wholePlaylist: Bool = false
     @Published var mode: Mode = .videoMP4
+    @Published var upscale: Bool = false
     @Published var log: String = ""
     @Published var isRunning: Bool = false
     @Published var destination: URL = {
@@ -70,6 +108,7 @@ final class Downloader: ObservableObject {
     }()
 
     private var process: Process?
+    private var cancelled = false
 
     func appendLog(_ s: String) {
         log += s
@@ -87,6 +126,7 @@ final class Downloader: ObservableObject {
     }
 
     func cancel() {
+        cancelled = true
         process?.terminate()
     }
 
@@ -96,12 +136,60 @@ final class Downloader: ObservableObject {
         guard let tools = Tools.bundled() else {
             appendLog("❌ Bundled tools missing from app.\n"); return
         }
-        let args = ytdlpArguments(url: trimmed, mode: mode, wholePlaylist: wholePlaylist,
-                                  destination: destination, tools: tools)
+        let wantsUpscale = upscale && mode == .videoMP4
+        if wantsUpscale && !tools.canUpscale {
+            appendLog("❌ The upscaler is missing from this build of the app.\n"); return
+        }
+        let fileList = wantsUpscale ? newFileListPath() : nil
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: tools.ytdlp)
-        proc.arguments = args
+        proc.arguments = ytdlpArguments(url: trimmed, mode: mode, wholePlaylist: wholePlaylist,
+                                        destination: destination, tools: tools, fileList: fileList)
+
+        log = ""
+        cancelled = false
+        isRunning = true
+        appendLog("▶︎ Starting…\n")
+        launch(proc) { status in
+            let files = fileList.map(takeFileList) ?? []
+            if status == 0 && !files.isEmpty {
+                self.upscaleNext(files[...], tools: tools)
+            } else {
+                self.finish(status)
+            }
+        }
+    }
+
+    /// Upscales the downloaded files one after another, then finishes.
+    private func upscaleNext(_ files: ArraySlice<String>, tools: Tools) {
+        guard !cancelled, let file = files.first else { finish(cancelled ? 1 : 0); return }
+        guard let proc = tools.upscaleProcess(file: file) else { finish(1); return }
+        appendLog("\n✨ AI upscaling…\n")
+        launch(proc) { status in
+            if status == 0 {
+                self.upscaleNext(files.dropFirst(), tools: tools)
+            } else {
+                self.finish(status)
+            }
+        }
+    }
+
+    private func finish(_ status: Int32) {
+        isRunning = false
+        process = nil
+        if cancelled {
+            appendLog("\n⏹ Cancelled.\n")
+        } else if status == 0 {
+            appendLog("\n✅ Done. Saved to \(destination.path)\n")
+        } else {
+            appendLog("\n❌ Finished with errors (code \(status)).\n")
+        }
+    }
+
+    /// Runs a process, streaming its output into the log, and calls `next`
+    /// on the main actor with its exit status once it ends.
+    private func launch(_ proc: Process, then next: @escaping @MainActor (Int32) -> Void) {
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
@@ -116,24 +204,20 @@ final class Downloader: ObservableObject {
         }
 
         proc.terminationHandler = { p in
+            let status = p.terminationStatus
             Task { @MainActor in
-                self.isRunning = false
                 pipe.fileHandleForReading.readabilityHandler = nil
-                self.appendLog(p.terminationStatus == 0
-                    ? "\n✅ Done. Saved to \(self.destination.path)\n"
-                    : "\n❌ Finished with errors (code \(p.terminationStatus)).\n")
+                next(status)
             }
         }
 
-        log = ""
-        isRunning = true
-        appendLog("▶︎ Starting…\n")
         do {
             try proc.run()
-            self.process = proc
+            process = proc
         } catch {
-            isRunning = false
+            pipe.fileHandleForReading.readabilityHandler = nil
             appendLog("❌ Could not launch: \(error.localizedDescription)\n")
+            next(1)
         }
     }
 }
@@ -245,6 +329,13 @@ struct ContentView: View {
                             .disabled(dl.isRunning)
                         }
 
+                        Toggle(isOn: $dl.upscale) {
+                            Label("AI upscale 2× (slow — saves a second, sharper copy)",
+                                  systemImage: "sparkles")
+                        }
+                        .toggleStyle(.switch)
+                        .disabled(dl.isRunning || dl.mode != .videoMP4)
+
                         HStack(spacing: 10) {
                             Button {
                                 dl.chooseFolder()
@@ -319,7 +410,7 @@ struct ContentView: View {
 
 // MARK: - Headless mode
 
-/// `YTGrab --cli [--mp3] [--playlist] [-o DIR] URL` runs the same download the
+/// `YTGrab --cli [--mp3] [--playlist] [--upscale] [-o DIR] URL` runs the same download the
 /// window would, without any UI. Used by build/test.sh; handy for scripting.
 func runCLI(_ arguments: [String]) -> Int32 {
     func fail(_ message: String) -> Int32 {
@@ -328,6 +419,7 @@ func runCLI(_ arguments: [String]) -> Int32 {
     }
     var mode = Mode.videoMP4
     var wholePlaylist = false
+    var upscale = false
     var destination = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     var url: String?
 
@@ -336,6 +428,7 @@ func runCLI(_ arguments: [String]) -> Int32 {
         switch arg {
         case "--mp3": mode = .audioMP3
         case "--playlist": wholePlaylist = true
+        case "--upscale": upscale = true
         case "-o":
             guard let dir = rest.popFirst() else { return fail("-o needs a folder") }
             destination = URL(fileURLWithPath: dir)
@@ -344,20 +437,34 @@ func runCLI(_ arguments: [String]) -> Int32 {
             url = arg
         }
     }
-    guard let url else { return fail("usage: YTGrab --cli [--mp3] [--playlist] [-o DIR] URL") }
+    guard let url else { return fail("usage: YTGrab --cli [--mp3] [--playlist] [--upscale] [-o DIR] URL") }
     guard let tools = Tools.bundled() else { return fail("bundled tools missing from app") }
+
+    let wantsUpscale = upscale && mode == .videoMP4
+    if wantsUpscale && !tools.canUpscale { return fail("upscaler missing from app") }
+    let fileList = wantsUpscale ? newFileListPath() : nil
+
+    func run(_ proc: Process) -> Int32 {
+        do {
+            try proc.run()
+        } catch {
+            return fail("could not launch \(proc.executableURL?.lastPathComponent ?? "tool"): "
+                        + error.localizedDescription)
+        }
+        proc.waitUntilExit()
+        return proc.terminationStatus
+    }
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: tools.ytdlp)
     proc.arguments = ytdlpArguments(url: url, mode: mode, wholePlaylist: wholePlaylist,
-                                    destination: destination, tools: tools)
-    do {
-        try proc.run()
-    } catch {
-        return fail("could not launch yt-dlp: \(error.localizedDescription)")
+                                    destination: destination, tools: tools, fileList: fileList)
+    var status = run(proc)
+    for file in fileList.map(takeFileList) ?? [] where status == 0 {
+        guard let upscaler = tools.upscaleProcess(file: file) else { return 1 }
+        status = run(upscaler)
     }
-    proc.waitUntilExit()
-    return proc.terminationStatus
+    return status
 }
 
 // MARK: - App entry

@@ -12,6 +12,7 @@ No Electron, no browser engine. The app binary is **~260 KB**; the rest of the b
 
 - 🎬 **Video → MP4** in H.264/AAC, so downloads play in QuickTime and on tablets/phones — sources only offered in other formats (WebM, MKV…) are converted automatically
 - 🎵 **Audio → MP3** extraction
+- ✨ **AI upscaling** (optional): saves a second copy at 2× resolution using [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN). It runs on the GPU frame by frame, so expect it to take many times the video's length
 - 📋 **Whole-playlist** mode, with files numbered in playlist order
 - 📂 Pick any output folder (defaults to `~/Downloads`)
 - 📜 Live progress log with cancel support
@@ -34,7 +35,7 @@ Requires Xcode command-line tools (`swiftc`) on macOS.
 
 ```bash
 cd build
-./build.sh      # fetches yt-dlp + ffmpeg + deno, generates the icon, compiles, signs → ../YTGrab.app
+./build.sh      # fetches yt-dlp, ffmpeg, deno + Real-ESRGAN, generates the icon, compiles, signs → ../YTGrab.app
 ./test.sh       # smoke-tests the built app with real downloads from localhost
 ./makedmg.sh    # builds the styled ../YTGrab.dmg with a custom background
 ```
@@ -50,7 +51,7 @@ downloads start failing, delete `build/Resources/` and rebuild to pick up a fres
 The app binary can also run headless, which is what `test.sh` uses:
 
 ```bash
-YTGrab.app/Contents/MacOS/YTGrab --cli [--mp3] [--playlist] [-o DIR] URL
+YTGrab.app/Contents/MacOS/YTGrab --cli [--mp3] [--playlist] [--upscale] [-o DIR] URL
 ```
 
 ### Project layout
@@ -61,7 +62,8 @@ YTGrab.app/Contents/MacOS/YTGrab --cli [--mp3] [--playlist] [-o DIR] URL
 | `build/Info.plist` | App bundle metadata |
 | `build/icongen.swift` | Renders the app icon at all required sizes |
 | `build/dmgbg.swift` | Renders the DMG background image |
-| `build/fetch-deps.sh` | Downloads yt-dlp, static FFmpeg and Deno into `Resources/` |
+| `build/fetch-deps.sh` | Downloads yt-dlp, static FFmpeg, Deno and Real-ESRGAN into `Resources/` |
+| `build/upscale.sh` | The AI-upscaling pipeline (FFmpeg → Real-ESRGAN → FFmpeg), bundled into the app |
 | `build/build.sh` | Compiles and assembles `YTGrab.app` |
 | `build/test.sh` | End-to-end smoke test of the built app |
 | `build/makedmg.sh` | Produces the styled `YTGrab.dmg` |
@@ -70,6 +72,7 @@ YTGrab.app/Contents/MacOS/YTGrab --cli [--mp3] [--playlist] [-o DIR] URL
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the download engine
 - [FFmpeg](https://ffmpeg.org/) — muxing/transcoding (static build via [osxexperts.net](https://www.osxexperts.net/))
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) — AI upscaling (ncnn/Vulkan build, `realesr-animevideov3` model)
 - [Deno](https://deno.com/) — JavaScript runtime yt-dlp needs for YouTube
 
 ## Disclaimer

@@ -36,6 +36,8 @@ codesign --verify --deep --strict "$APP" || fail "code signature invalid"
 "$RES/ffmpeg" -version | head -1
 "$RES/deno" --version | head -1
 "$RES/deno" eval 'console.log("deno runs JavaScript: ok")'
+[ -x "$RES/realesrgan/realesrgan-ncnn-vulkan" ] || fail "Real-ESRGAN missing from bundle"
+[ -f "$RES/realesrgan/models/realesr-animevideov3-x2.bin" ] || fail "Real-ESRGAN model missing"
 
 echo "== Generating samples =="
 mkdir "$WORK/srv" "$WORK/out"
@@ -67,6 +69,17 @@ echo "== Audio → MP3 =="
 mkdir "$WORK/mp3"
 "$BIN" --cli --mp3 -o "$WORK/mp3" "http://127.0.0.1:$PORT/legacy.mkv"
 has_stream "$WORK/mp3/legacy.mp3" "Audio: mp3"
+
+echo "== Video → MP4 + AI upscale =="
+mkdir "$WORK/up"
+# Small chunks so the 30-frame sample exercises the chunk joining too.
+CHUNK_FRAMES=12 "$BIN" --cli --upscale -o "$WORK/up" "http://127.0.0.1:$PORT/h264.mp4"
+has_stream "$WORK/up/h264.mp4" "320x240"
+has_stream "$WORK/up/h264 (upscaled 2x).mp4" "Video: h264.* 640x480"
+has_stream "$WORK/up/h264 (upscaled 2x).mp4" "Audio: aac"
+FRAMES="$("$RES/ffmpeg" -v error -i "$WORK/up/h264 (upscaled 2x).mp4" -map 0:v -f null - -stats 2>&1 \
+    | sed -n 's/.*frame= *\([0-9]*\).*/\1/p' | tail -1)"
+[ "$FRAMES" = 30 ] || fail "upscaled copy has $FRAMES frames, expected 30"
 
 echo "== Bad input is rejected =="
 if "$BIN" --cli -o "$WORK/out" "--version" >/dev/null 2>&1; then

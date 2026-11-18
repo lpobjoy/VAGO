@@ -6,7 +6,8 @@ APP="YTGrab.app"
 OUT="../$APP"
 
 # Bootstrap: fetch the bundled tools and generate the icon if they're missing.
-if [ ! -x Resources/yt-dlp ] || [ ! -x Resources/ffmpeg ] || [ ! -x Resources/deno ]; then
+if [ ! -x Resources/yt-dlp ] || [ ! -x Resources/ffmpeg ] || [ ! -x Resources/deno ] \
+    || [ ! -x Resources/realesrgan/realesrgan-ncnn-vulkan ]; then
     echo "== Fetching dependencies =="
     ./fetch-deps.sh
 fi
@@ -33,6 +34,8 @@ cp AppIcon.icns "$OUT/Contents/Resources/AppIcon.icns"
 cp Resources/yt-dlp "$OUT/Contents/Resources/yt-dlp"
 cp Resources/ffmpeg "$OUT/Contents/Resources/ffmpeg"
 cp Resources/deno "$OUT/Contents/Resources/deno"
+cp -R Resources/realesrgan "$OUT/Contents/Resources/realesrgan"
+cp upscale.sh "$OUT/Contents/Resources/upscale.sh"
 chmod +x "$OUT/Contents/Resources/yt-dlp" "$OUT/Contents/Resources/ffmpeg" \
     "$OUT/Contents/Resources/deno"
 
@@ -42,6 +45,7 @@ codesign --force -s - "$OUT/Contents/Resources/yt-dlp"
 codesign --force -s - "$OUT/Contents/Resources/ffmpeg"
 # deno ships with the entitlements its JIT needs; keep them when re-signing.
 codesign --force --preserve-metadata=entitlements -s - "$OUT/Contents/Resources/deno"
+codesign --force -s - "$OUT/Contents/Resources/realesrgan/realesrgan-ncnn-vulkan"
 codesign --force -s - "$OUT/Contents/MacOS/YTGrab"
 codesign --force --deep -s - "$OUT"
 
